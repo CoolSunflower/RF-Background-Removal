@@ -9,20 +9,19 @@ import streamlit_drawable_canvas as dc
 
 st.set_page_config(layout="wide")
 
-st.title("Team Amber: Background Removal with Bounding Boxes")
+st.title("Team Amber: Background Removal using Random Forests")
 
 # Two-column layout
 col1, col2 = st.columns(2)
 
 with col1:
-    st.header("Upload and Draw Bounding Boxes")
+    st.header("Upload an Image and Draw Bounding Boxes")
     uploaded_file = st.file_uploader("Upload an Image", type=["png", "jpg", "jpeg"])
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
         # st.image(image, caption="Original Image", use_container_width=True)
         image_np = np.array(image)
 
-        # Convert image to base64 to avoid image_to_url error
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         img_b64 = base64.b64encode(buffered.getvalue()).decode()
@@ -32,7 +31,7 @@ with col1:
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=2,
             stroke_color="#FF0000",
-            background_image=image,  # Directly pass the PIL.Image object
+            background_image=image,
             update_streamlit=True,
             height=image.size[1],
             width=image.size[0],
