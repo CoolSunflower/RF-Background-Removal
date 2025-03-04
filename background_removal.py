@@ -163,11 +163,6 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     idx = np.concatenate([bg_idx, fg_idx])
     X, y = X[idx], y[idx]
 
-    # Initialize a counter in session_state if not already set.
-    if "iteration" not in st.session_state:
-        st.session_state.iteration = 0
-        st.session_state.best_accuracy = 0
-
     max_iter = max_hp_tuning_iter
 
     # 6. Train a simple RandomForest classifier
