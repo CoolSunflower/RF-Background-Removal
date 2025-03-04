@@ -6,3 +6,4 @@ scikit-image
 matplotlib
 pillow
 hyperopt
+setuptools
