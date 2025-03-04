@@ -1,12 +1,10 @@
 """
 TODO:
-- change instead of sampling everything in the bounding box as foreground maybe only sample towards center?
-- Can you provide support for adding a bunch of bounding boxes instead of just one?
-
-- How to make the features better!!!!
-
-- add more sampling towards center!!
-
+- Add more sampling towards center!!
+- The image width in streamlit app is constrained by the maximum width of the column instead of actual image width 
+    (we cant use actual since will cause problems for larger images, but need to ensure if scaling that the positions are also scaled when passing to function call)
+- More user options on the UI, including which features to use
+- Add higher weightage to classifying points to bg class --> this will ensure point in fg which look like bg are also correctly classified!
 """
 
 import cv2
@@ -19,6 +17,7 @@ from skimage.feature import local_binary_pattern, hog
 from skimage.color import rgb2gray
 import streamlit as st
 from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
+from feature_extraction import quest_feature_extraction
 
 def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str = 'LAB', max_samples: int = 5000, morph_kernel_size: int = 5, features: list = [], max_hp_tuning_iter: int = 50) -> np.ndarray:
     """
@@ -45,17 +44,6 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     -------
     final_mask : np.ndarray
         A binary mask (H x W) where 1 = foreground, 0 = background.
-        
-    Notes
-    -----
-    - This function does the following:
-        1. Extracts foreground samples from the bounding box.
-        2. Extracts background samples from outside the bounding box.
-        3. Converts color space, builds training set (features + labels).
-        4. Trains a Random Forest to discriminate FG vs BG.
-        5. Predicts for every pixel in the image -> initial mask.
-        6. Refines the mask with morphological ops.
-        7. Returns the final binary mask (foreground=1, background=0).
     """
     
     # Validate & parse bounding boxes
@@ -68,7 +56,6 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     # 2. Convert color space if needed
     #    We'll unify everything into a 'features' array later
     if color_space.upper() == 'LAB':
-        # Convert BGR -> Lab if using OpenCV's default image read
         img_converted = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
     elif color_space.upper() == 'HSV':
         img_converted = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -81,31 +68,13 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     H, W, C = img_converted.shape
 
     # 3. Gather Foreground (FG) samples from inside bounding box
-    fg_pixels = []
-    for x1, y1, x2, y2 in bboxes:
-        fg_pixels.extend(img_converted[y1:y2, x1:x2].reshape(-1, C))
-    fg_pixels = np.array(fg_pixels, dtype=np.float32)
-    fg_labels = np.ones((fg_pixels.shape[0],), dtype=np.uint8)
-    
     mask = np.zeros((H, W), dtype=np.uint8)
     for x1, y1, x2, y2 in bboxes:
         mask[y1:y2, x1:x2] = 1
-    bg_pixels = img_converted[mask == 0].reshape(-1, C)
-    bg_labels = np.zeros((bg_pixels.shape[0],), dtype=np.uint8)
-
-    # # 5. Subsample to avoid huge training sets
-    # if fg_pixels.shape[0] > max_samples:
-    #     idx_fg = np.random.choice(fg_pixels.shape[0], max_samples, replace=False)
-    #     fg_pixels = fg_pixels[idx_fg]
-    #     fg_labels = fg_labels[idx_fg]
-    # if bg_pixels.shape[0] > max_samples:
-    #     idx_bg = np.random.choice(bg_pixels.shape[0], max_samples, replace=False)
-    #     bg_pixels = bg_pixels[idx_bg]
-    #     bg_labels = bg_labels[idx_bg]
 
     # Combine FG and BG training samples
-    X = np.vstack((fg_pixels, bg_pixels))
-    y = np.concatenate((fg_labels, bg_labels))
+    X = img_converted.reshape(-1, C)  # Basic pixel features
+    y = mask.reshape(-1)
 
     additional_features = []
     if 'lbp' in features:
@@ -120,8 +89,11 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
         additional_features.append(ltp_features)
     if 'quest' in features:
         # QUEST (Quantitative Evaluation of Texture) feature extraction
-        quest_features = np.mean(img_converted, axis=2).reshape(-1, 1)
-        print(f"Quest Features shape: {quest_features.shape}")
+        # quest_features = np.mean(img_converted, axis=2).reshape(-1, 1)
+        # print(f"Quest Features shape: {quest_features.shape}")
+        # additional_features.append(quest_features)
+        gray_img = cv2.cvtColor(img_converted, cv2.COLOR_RGB2GRAY)
+        quest_features = quest_feature_extraction(gray_img)
         additional_features.append(quest_features)
     if 'hog' in features:
         gray_img = rgb2gray(img_converted)
@@ -185,7 +157,7 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     search_space = {
         'n_estimators': hp.choice('n_estimators', list(range(50, 201))),
         'max_depth': hp.choice('max_depth', list(range(1, 51))),
-        'min_samples_split': hp.choice('min_samples_split', list(range(2, 11))),
+        'min_samples_split': hp.choice('min_samples_split', list(range(3, 11))),
         'bootstrap': hp.choice('bootstrap', [True, False])
     }
 
@@ -222,12 +194,12 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     
     # 7. Predict foreground vs. background for every pixel
     #    We'll reshape the image into Nx3, predict, then reshape back
-    flat_img = img_converted.reshape((-1, C)).astype(np.float32)
-    if additional_features:
-        flat_additional_features = [feat.reshape((-1, 1)) for feat in additional_features]
-        flat_img = np.hstack([flat_img] + flat_additional_features)
+    # flat_img = img_converted.reshape((-1, C)).astype(np.float32)
+    # if additional_features:
+    #     flat_additional_features = [feat.reshape((-1, 1)) for feat in additional_features]
+    #     flat_img = np.hstack([flat_img] + flat_additional_features)
 
-    pred = rf.predict(flat_img)
+    pred = rf.predict(np.hstack([img_converted.reshape(-1, C)] + additional_features))
     mask = pred.reshape((H, W))  # shape: HxW, values in {0,1}
 
     # 8. Morphological refinement (closing -> opening, for example)
