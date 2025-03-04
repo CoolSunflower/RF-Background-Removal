@@ -5,16 +5,22 @@ TODO:
 
 - How to make the features better!!!!
 
+- add more sampling towards center!!
+
 """
 
 import cv2
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
 from sklearn.utils import shuffle
 import matplotlib.pyplot as plt
+from skimage.feature import local_binary_pattern, hog
+from skimage.color import rgb2gray
+import streamlit as st
+from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
 
-
-def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str = 'LAB', max_samples: int = 5000, morph_kernel_size: int = 5) -> np.ndarray:
+def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str = 'LAB', max_samples: int = 5000, morph_kernel_size: int = 5, features: list = [], max_hp_tuning_iter: int = 50) -> np.ndarray:
     """
     Remove background given a bounding box around the foreground object.
     
@@ -33,7 +39,8 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
         Max number of foreground and background pixels to sample for training.
     morph_kernel_size : int, optional
         Size of the morphological kernel for refining the mask. Default 5.
-        
+    features : list, optional
+        List of additional features to include, such as {'lbp', 'ltp', 'quest', 'hog'}.        
     Returns
     -------
     final_mask : np.ndarray
@@ -66,7 +73,6 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     elif color_space.upper() == 'HSV':
         img_converted = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     elif color_space.upper() == 'RGB':
-        # If the input is in BGR, just convert to RGB
         img_converted = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     else:
         raise ValueError("color_space must be one of {'RGB','LAB','HSV'}")
@@ -80,65 +86,152 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
         fg_pixels.extend(img_converted[y1:y2, x1:x2].reshape(-1, C))
     fg_pixels = np.array(fg_pixels, dtype=np.float32)
     fg_labels = np.ones((fg_pixels.shape[0],), dtype=np.uint8)
-    # for row in range(y1, y2):
-    #     for col in range(x1, x2):
-    #         # (Lab or HSV or RGB values)
-    #         fg_pixels.append(img_converted[row, col, :])
-
-    # 4. Gather Background (BG) samples from outside bounding box
-    # #    We'll pick some random points outside the box to limit data size
-    # bg_pixels_list = []
-    # #   - Top region: rows in [0, y1)
-    # for row in range(0, y1):
-    #     for col in range(0, W):
-    #         bg_pixels_list.append(img_converted[row, col, :])
-    # #   - Bottom region: rows in [y2, H)
-    # for row in range(y2, H):
-    #     for col in range(0, W):
-    #         bg_pixels_list.append(img_converted[row, col, :])
-    # #   - Left region: columns in [0, x1), but rows in [y1, y2] (to avoid double counting corners)
-    # for row in range(y1, y2):
-    #     for col in range(0, x1):
-    #         bg_pixels_list.append(img_converted[row, col, :])
-    # #   - Right region: columns in [x2, W), rows in [y1, y2]
-    # for row in range(y1, y2):
-    #     for col in range(x2, W):
-    #         bg_pixels_list.append(img_converted[row, col, :])
-    # Gather Background (BG) samples from outside bounding boxes
-
+    
     mask = np.zeros((H, W), dtype=np.uint8)
     for x1, y1, x2, y2 in bboxes:
         mask[y1:y2, x1:x2] = 1
     bg_pixels = img_converted[mask == 0].reshape(-1, C)
     bg_labels = np.zeros((bg_pixels.shape[0],), dtype=np.uint8)
 
-    # bg_pixels = np.array(bg_pixels_list, dtype=np.float32)
-    # bg_labels = np.zeros((bg_pixels.shape[0],), dtype=np.uint8)  # label = 0 for background
-
-    # 5. Subsample to avoid huge training sets
-    if fg_pixels.shape[0] > max_samples:
-        idx_fg = np.random.choice(fg_pixels.shape[0], max_samples, replace=False)
-        fg_pixels = fg_pixels[idx_fg]
-        fg_labels = fg_labels[idx_fg]
-    if bg_pixels.shape[0] > max_samples:
-        idx_bg = np.random.choice(bg_pixels.shape[0], max_samples, replace=False)
-        bg_pixels = bg_pixels[idx_bg]
-        bg_labels = bg_labels[idx_bg]
+    # # 5. Subsample to avoid huge training sets
+    # if fg_pixels.shape[0] > max_samples:
+    #     idx_fg = np.random.choice(fg_pixels.shape[0], max_samples, replace=False)
+    #     fg_pixels = fg_pixels[idx_fg]
+    #     fg_labels = fg_labels[idx_fg]
+    # if bg_pixels.shape[0] > max_samples:
+    #     idx_bg = np.random.choice(bg_pixels.shape[0], max_samples, replace=False)
+    #     bg_pixels = bg_pixels[idx_bg]
+    #     bg_labels = bg_labels[idx_bg]
 
     # Combine FG and BG training samples
     X = np.vstack((fg_pixels, bg_pixels))
     y = np.concatenate((fg_labels, bg_labels))
 
+    additional_features = []
+    if 'lbp' in features:
+        gray_img = rgb2gray(img_converted)
+        lbp_features = local_binary_pattern(gray_img, P=8, R=1, method='uniform').reshape(-1, 1)
+        print(f"LBP Features shape: {lbp_features.shape}")
+        additional_features.append(lbp_features)
+    if 'ltp' in features:
+        # Placeholder for LTP (Local Ternary Pattern) extraction
+        ltp_features = np.where(gray_img > 0.5, 1, -1).reshape(-1, 1)
+        print(f"LTP Features shape: {ltp_features.shape}")
+        additional_features.append(ltp_features)
+    if 'quest' in features:
+        # QUEST (Quantitative Evaluation of Texture) feature extraction
+        quest_features = np.mean(img_converted, axis=2).reshape(-1, 1)
+        print(f"Quest Features shape: {quest_features.shape}")
+        additional_features.append(quest_features)
+    if 'hog' in features:
+        gray_img = rgb2gray(img_converted)
+        hog_features = hog(
+            gray_img, 
+            pixels_per_cell=(8, 8), 
+            cells_per_block=(2, 2), 
+            block_norm='L2-Hys', 
+            feature_vector=True
+        )
+        
+        expected_size = H * W
+        if len(hog_features) < expected_size:
+            # Repeat features to match size
+            hog_features = np.tile(hog_features, (expected_size // len(hog_features) + 1))[:expected_size]
+        elif len(hog_features) > expected_size:
+            # Trim features if too many
+            hog_features = hog_features[:expected_size]
+        
+        hog_features = hog_features.reshape(-1, 1)
+        print(f"HOG Features shape: {hog_features.shape}")
+        additional_features.append(hog_features)
+
+    if additional_features:
+        X = np.hstack([X] + additional_features)
+
     # Shuffle to avoid any ordering bias
     X, y = shuffle(X, y, random_state=42)
 
+    if max_samples < len(y[y == 0]):
+        bg_idx = np.random.choice(np.where(y == 0)[0], max_samples, replace=False)
+    else:
+        bg_idx = np.where(y == 0)[0]
+    if max_samples < len(y[y == 1]):
+        fg_idx = np.random.choice(np.where(y == 1)[0], max_samples, replace=False)
+    else:
+        fg_idx = np.where(y == 1)[0]
+
+    idx = np.concatenate([bg_idx, fg_idx])
+    X, y = X[idx], y[idx]
+
+    # Initialize a counter in session_state if not already set.
+    if "iteration" not in st.session_state:
+        st.session_state.iteration = 0
+        st.session_state.best_accuracy = 0
+
+    max_iter = max_hp_tuning_iter
+
     # 6. Train a simple RandomForest classifier
-    rf = RandomForestClassifier(n_estimators=10, random_state=42)
+    def hyperopt_objective(params, X, y, status_widget):        
+        """Objective function for Hyperopt to minimize."""
+        model = RandomForestClassifier(**params, random_state=42)
+        accuracy = cross_val_score(model, X, y, cv=3, scoring='accuracy').mean()
+
+        # Increment a global counter stored in session_state
+        st.session_state.iteration += 1
+        iteration = st.session_state.iteration
+        st.session_state.best_accuracy = max(accuracy, st.session_state.best_accuracy)
+        best_accuracy = st.session_state.best_accuracy
+
+        # Update the status widget with the current iteration and accuracy
+        status_widget.text(f"Iteration {iteration}/{max_iter}: Accuracy = {accuracy:.4f}, Best Accuracy: {best_accuracy:.4f}")
+    
+        return {'loss': -accuracy, 'status': STATUS_OK}
+
+    search_space = {
+        'n_estimators': hp.choice('n_estimators', list(range(50, 201))),
+        'max_depth': hp.choice('max_depth', list(range(1, 51))),
+        'min_samples_split': hp.choice('min_samples_split', list(range(2, 11))),
+        'bootstrap': hp.choice('bootstrap', [True, False])
+    }
+
+    # Run Hyperopt optimization
+    trials = Trials()
+    status_text = st.empty()
+    best_params = fmin(
+        fn=lambda params: hyperopt_objective(params, X, y, status_text),
+        space=search_space,
+        algo=tpe.suggest,
+        max_evals=max_iter,
+        trials=trials,
+        rstate=np.random.default_rng(42)
+    )
+
+    # Convert best params to integers where applicable
+    best_params['n_estimators'] = int(best_params['n_estimators'])
+    best_params['max_depth'] = int(best_params['max_depth'])
+    best_params['min_samples_split'] = int(best_params['min_samples_split'])
+    best_params['bootstrap'] = bool(best_params['bootstrap'])
+
+    print("Best Hyperparameters found by Hyperopt:")
+    print(best_params)
+
+    st.success("Hyperparameter tuning completed!")
+    st.write("Best Hyperparameters:", best_params)
+
+    # Train the RandomForest model with the best hyperparameters
+    rf = RandomForestClassifier(**best_params, random_state=42)
     rf.fit(X, y)
 
+    # Print the accuracy score on the training data
+    print(f"Random Forest Training Accuracy: {rf.score(X, y):.4f}")
+    
     # 7. Predict foreground vs. background for every pixel
     #    We'll reshape the image into Nx3, predict, then reshape back
     flat_img = img_converted.reshape((-1, C)).astype(np.float32)
+    if additional_features:
+        flat_additional_features = [feat.reshape((-1, 1)) for feat in additional_features]
+        flat_img = np.hstack([flat_img] + flat_additional_features)
+
     pred = rf.predict(flat_img)
     mask = pred.reshape((H, W))  # shape: HxW, values in {0,1}
 
@@ -167,7 +260,7 @@ if __name__ == "__main__":
     bounding_box = [(61, 92, 349, 230)]  # example values
 
     # Call our function
-    mask = remove_background_with_bbox(image_bgr, bounding_box)
+    mask = remove_background_with_bbox(image_bgr, bounding_box, features=['lbp', 'ltp', 'quest', 'hog'])
 
     # Create a background-removed visualization
     # We'll set BG pixels to white for demonstration
