@@ -1,4 +1,4 @@
-opencv-python
+opencv-python-headless
 streamlit==1.40.0
 streamlit_drawable_canvas
 scikit-learn
