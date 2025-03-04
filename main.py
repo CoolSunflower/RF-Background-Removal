@@ -73,7 +73,7 @@ with col1:
         # Button to remove background
         if st.button("Remove Background") and bboxes:
             st.session_state.iteration = 0
-            result_mask = remove_background_with_bbox(image_np, bboxes, max_samples=10000, morph_kernel_size=morph_kernel_size, max_hp_tuning_iter=max_iter)
+            result_mask = remove_background_with_bbox(image_np, bboxes, max_samples=10000, morph_kernel_size=morph_kernel_size, max_hp_tuning_iter=max_iter, features=['lbp', 'ltp', 'quest', 'hog'])
             masked_image = image_np.copy()
             masked_image[result_mask == 0] = [0, 0, 0]
             st.success("Background removed!")
