@@ -5,6 +5,8 @@ TODO:
     (we cant use actual since will cause problems for larger images, but need to ensure if scaling that the positions are also scaled when passing to function call)
 - More user options on the UI, including which features to use
 - Add higher weightage to classifying points to bg class --> this will ensure point in fg which look like bg are also correctly classified!
+- Number of background pixels sampled = number of foreground*2
+- Background also more sampling close to foreground bboxes
 """
 
 import cv2
@@ -157,7 +159,7 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     search_space = {
         'n_estimators': hp.choice('n_estimators', list(range(50, 201))),
         'max_depth': hp.choice('max_depth', list(range(1, 51))),
-        'min_samples_split': hp.choice('min_samples_split', list(range(3, 11))),
+        'min_samples_split': hp.choice('min_samples_split', list(range(2, 11))),
         'bootstrap': hp.choice('bootstrap', [True, False])
     }
 
@@ -177,6 +179,7 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     best_params['n_estimators'] = int(best_params['n_estimators'])
     best_params['max_depth'] = int(best_params['max_depth'])
     best_params['min_samples_split'] = int(best_params['min_samples_split'])
+    best_params['min_samples_split'] = max(best_params['min_samples_split'], 2)
     best_params['bootstrap'] = bool(best_params['bootstrap'])
 
     print("Best Hyperparameters found by Hyperopt:")
