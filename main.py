@@ -53,9 +53,9 @@ with col1:
         # Add a slider for max hp tuning iter
         max_iter = st.slider(
             "Hyperparameter Tuning Iterations", 
-            min_value=10, 
+            min_value=2, 
             max_value=100, 
-            value=10, 
+            value=2, 
             step=2, 
             help="Adjust the number of iterations for hyperparameter tuning of the random forest model"
         )
@@ -74,7 +74,7 @@ with col1:
         if st.button("Remove Background") and bboxes:
             st.session_state.iteration = 0
             st.session_state.best_accuracy = 0
-            result_mask = remove_background_with_bbox(image_np, bboxes, max_samples=10000, morph_kernel_size=morph_kernel_size, max_hp_tuning_iter=max_iter, features=['lbp', 'ltp', 'quest', 'hog'])
+            result_mask = remove_background_with_bbox(image_np, bboxes, max_samples=10000, morph_kernel_size=morph_kernel_size, max_hp_tuning_iter=max_iter, features=['lbp', 'quest', 'hog'])
             masked_image = image_np.copy()
             masked_image[result_mask == 0] = [0, 0, 0]
             st.success("Background removed!")
