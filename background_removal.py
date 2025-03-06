@@ -6,8 +6,7 @@ TODO:
 
 import cv2
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-# from test import LogisticRegression
+from lr import LogisticRegression
 from sklearn.model_selection import cross_val_score
 from sklearn.utils import shuffle
 import matplotlib.pyplot as plt
@@ -168,16 +167,8 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, max_samples: int 
 
     search_space = {
         'C': hp.loguniform('C', np.log(1e-4), np.log(1e4)),
-        'solver': hp.choice('solver', ['newton-cg', 'lbfgs', 'saga']),
         'max_iter': hp.choice('max_iter', list(range(500, 2001))),
     }
-
-    # search_space = {
-    #     'lr': hp.loguniform('lr', np.log(1e-4), np.log(1e-1)),  # Learning rate between 0.0001 and 0.1
-    #     'num_iter': hp.choice('num_iter', list(range(500, 2001))),  # Number of iterations between 500 and 2000
-    #     'reg_strength': hp.loguniform('reg_strength', np.log(1e-4), np.log(1e2)),  # L2 regularization strength
-    #     'fit_intercept': hp.choice('fit_intercept', [True, False]),  # Whether to fit an intercept
-    # }
 
     # Run Hyperopt optimization
     trials = Trials()
@@ -194,13 +185,6 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, max_samples: int 
     # # Convert best params to appropriate types
     best_params['C'] = float(best_params['C'])
     best_params['max_iter'] = max(int(best_params['max_iter']), 500)
-    best_params['solver'] = ['newton-cg', 'lbfgs', 'saga'][best_params['solver']]
-
-    # Convert best params to appropriate types
-    # best_params['lr'] = float(best_params['lr'])
-    # best_params['num_iter'] = max(int(best_params['num_iter']), 500)
-    # best_params['reg_strength'] = float(best_params['reg_strength'])
-    # best_params['fit_intercept'] = bool(best_params['fit_intercept'])
 
     print("Best Hyperparameters found by Hyperopt:")
     print(best_params)
@@ -217,7 +201,7 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, max_samples: int 
     
     pred = lr.predict(np.hstack([img_converted.reshape(-1, C)] + additional_features))
     mask = pred.reshape((H, W))  # shape: HxW, values in {0,1}
-    print(mask)
+    mask = mask.astype(np.uint8)
 
     # 8. Morphological refinement (closing -> opening, for example)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_kernel_size, morph_kernel_size))
