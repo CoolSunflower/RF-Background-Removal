@@ -1,11 +1,8 @@
 """
 TODO:
-- Add more sampling towards center!!
 - The image width in streamlit app is constrained by the maximum width of the column instead of actual image width 
     (we cant use actual since will cause problems for larger images, but need to ensure if scaling that the positions are also scaled when passing to function call)
 - More user options on the UI, including which features to use
-- Add higher weightage to classifying points to bg class --> this will ensure point in fg which look like bg are also correctly classified!
-- Number of background pixels sampled = number of foreground*2
 - Background also more sampling close to foreground bboxes
 """
 
@@ -85,15 +82,10 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
         print(f"LBP Features shape: {lbp_features.shape}")
         additional_features.append(lbp_features)
     if 'ltp' in features:
-        # Placeholder for LTP (Local Ternary Pattern) extraction
         ltp_features = np.where(gray_img > 0.5, 1, -1).reshape(-1, 1)
         print(f"LTP Features shape: {ltp_features.shape}")
         additional_features.append(ltp_features)
     if 'quest' in features:
-        # QUEST (Quantitative Evaluation of Texture) feature extraction
-        # quest_features = np.mean(img_converted, axis=2).reshape(-1, 1)
-        # print(f"Quest Features shape: {quest_features.shape}")
-        # additional_features.append(quest_features)
         gray_img = cv2.cvtColor(img_converted, cv2.COLOR_RGB2GRAY)
         quest_features = quest_feature_extraction(gray_img)
         additional_features.append(quest_features)
@@ -122,27 +114,61 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     if additional_features:
         X = np.hstack([X] + additional_features)
 
-    # Shuffle to avoid any ordering bias
-    X, y = shuffle(X, y, random_state=42)
-
-    if max_samples < len(y[y == 0]):
-        bg_idx = np.random.choice(np.where(y == 0)[0], max_samples, replace=False)
+    # --- Modified Sampling Strategy ---
+    # For background pixels, sample uniformly.
+    bg_indices_all = np.where(y == 0)[0]
+    if (8*max_samples) < len(bg_indices_all):
+        bg_idx = np.random.choice(bg_indices_all, 8*max_samples, replace=False)
     else:
-        bg_idx = np.where(y == 0)[0]
-    if max_samples < len(y[y == 1]):
-        fg_idx = np.random.choice(np.where(y == 1)[0], max_samples, replace=False)
-    else:
-        fg_idx = np.where(y == 1)[0]
+        bg_idx = bg_indices_all
 
+    # For foreground pixels, sample with a bias toward the center of the bounding boxes.
+    fg_indices_all = np.where(y == 1)[0]
+    if len(fg_indices_all) > 0:
+        # Compute (row, col) coordinates for each foreground pixel.
+        rows = fg_indices_all // W
+        cols = fg_indices_all % W
+        fg_weights = np.zeros_like(rows, dtype=float)
+
+        # For each bounding box, assign higher weights to pixels closer to the center.
+        for bbox in bboxes:
+            x1, y1, x2, y2 = bbox
+            in_bbox = (cols >= x1) & (cols < x2) & (rows >= y1) & (rows < y2)
+            if np.any(in_bbox):
+                center_row = (y1 + y2) / 2.0
+                center_col = (x1 + x2) / 2.0
+                sigma = min(x2 - x1, y2 - y1) / 4.0
+                distances = np.sqrt((rows[in_bbox] - center_row)**2 + (cols[in_bbox] - center_col)**2)
+                weights = np.exp(- (distances**2) / (2 * sigma**2))
+                fg_weights[in_bbox] = weights
+
+        # Normalize the weights so they sum to 1.
+        if fg_weights.sum() > 0:
+            fg_prob = fg_weights / fg_weights.sum()
+        else:
+            fg_prob = np.ones_like(fg_weights) / len(fg_weights)
+        
+        if max_samples < len(fg_indices_all):
+            fg_idx = np.random.choice(fg_indices_all, max_samples, replace=False, p=fg_prob)
+        else:
+            fg_idx = fg_indices_all
+    else:
+        fg_idx = np.array([])
+
+    # Combine background and foreground indices.
     idx = np.concatenate([bg_idx, fg_idx])
     X, y = X[idx], y[idx]
+    # ---------------------------------
+
+    # Shuffle to avoid any ordering bias
+    X, y = shuffle(X, y, random_state=42)
 
     max_iter = max_hp_tuning_iter
 
     # 6. Train a simple RandomForest classifier
     def hyperopt_objective(params, X, y, status_widget):        
         """Objective function for Hyperopt to minimize."""
-        model = RandomForestClassifier(**params, random_state=42)
+        model = RandomForestClassifier(**params, random_state=42, n_jobs=-1, class_weight = {0: 3, 1: 1})
         accuracy = cross_val_score(model, X, y, cv=3, scoring='accuracy').mean()
 
         # Increment a global counter stored in session_state
@@ -189,7 +215,7 @@ def remove_background_with_bbox(img: np.ndarray, bboxes: list, color_space: str 
     st.write("Best Hyperparameters:", best_params)
 
     # Train the RandomForest model with the best hyperparameters
-    rf = RandomForestClassifier(**best_params, random_state=42)
+    rf = RandomForestClassifier(**best_params, random_state=42, n_jobs = -1, class_weight = {0: 3, 1: 1})
     rf.fit(X, y)
 
     # Print the accuracy score on the training data
