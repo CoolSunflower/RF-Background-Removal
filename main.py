@@ -9,7 +9,7 @@ import streamlit_drawable_canvas as dc
 
 st.set_page_config(layout="wide")
 
-st.title("Team Amber: Background Removal using Random Forests")
+st.title("Team Amber: Background Removal using Logistic Regression using on-the-fly model training")
 
 # Two-column layout
 col1, col2 = st.columns(2)
